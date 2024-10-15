@@ -1,0 +1,18 @@
+[package]
+name = "host-code"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cudarc = { version = "0.12.1", features = ["cuda-version-from-build-system"]}
+rand = "0.8.5"
+
+[[bin]]
+name = "add"
+path = "src/add.rs"
+[[bin]]
+name = "memcpy"
+path = "src/memcpy.rs"
+[[bin]]
+name = "rgba2gray"
+path = "src/rgba2gray.rs"

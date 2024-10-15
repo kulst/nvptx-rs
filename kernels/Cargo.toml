@@ -1,0 +1,11 @@
+[package]
+name = "kernels"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[lib]
+name = "kernels"
+path = "src/lib.rs"
+crate-type = ["cdylib"]

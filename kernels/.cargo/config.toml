@@ -1,0 +1,3 @@
+[build]
+target = "nvptx64-nvidia-cuda"
+rustflags = ["-C", "linker-flavor=llbc", "-Z", "unstable-options", "-C", "target-cpu=sm_61"]
