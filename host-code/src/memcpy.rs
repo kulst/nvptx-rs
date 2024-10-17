@@ -3,6 +3,7 @@ use cudarc::{
     nvrtc::Ptx,
 };
 use rand::{distributions::Standard, prelude::*};
+use std::iter;
 
 fn main() -> Result<(), DriverError> {
     let dev = CudaDevice::new(0)?;
@@ -17,7 +18,7 @@ fn main() -> Result<(), DriverError> {
     )?;
 
     // and then retrieve the function with `get_func`
-    let f = dev.get_func("kernels", "add").unwrap();
+    let f = dev.get_func("kernels", "memcpy").unwrap();
 
     // Specify size of input array
     const SIZE: usize = 1024 * 1024;
@@ -26,29 +27,22 @@ fn main() -> Result<(), DriverError> {
     let mut rng = rand::thread_rng().sample_iter(Standard);
 
     let h_a: Vec<f32> = rng.by_ref().take(SIZE).collect();
-    let h_b: Vec<f32> = rng.by_ref().take(SIZE).collect();
-    let mut h_c: Vec<f32> = (0..SIZE).map(|_| 0.).collect();
+    let mut h_b: Vec<f32> = iter::repeat(0f32).take(SIZE).collect();
 
     // Allocate device memory and copy host values to it
     let d_a = dev.htod_sync_copy(&h_a)?;
-    let d_b = dev.htod_sync_copy(&h_b)?;
-    let mut d_c = dev.htod_sync_copy(&h_c)?;
+    let mut d_b = dev.alloc_zeros::<f32>(SIZE)?;
 
     // Specify number of threads and launch the kernel
     let n = SIZE as u32;
     let cfg = LaunchConfig::for_num_elems(n);
-    unsafe { f.launch(cfg, (&d_a, &d_b, &mut d_c, n as usize)) }?;
+    unsafe { f.launch(cfg, (&mut d_b, &d_a, n as usize)) }?;
 
     // Deallocate device memory and copy it back to host if necessary
     dev.sync_reclaim(d_a)?;
-    dev.sync_reclaim(d_b)?;
-    dev.dtoh_sync_copy_into(&d_c, &mut h_c)?;
-    dev.sync_reclaim(d_c)?;
-
-    // Perform the same computation on the host
-    let c = h_a.iter().zip(h_b).map(|(a, b)| a + b).collect::<Vec<_>>();
+    dev.dtoh_sync_copy_into(&d_b, &mut h_b)?;
 
     // Verify correctness
-    assert_eq!(c, h_c);
+    assert_eq!(h_a, h_b);
     Ok(())
 }

@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "host-code",
+    "xtask",
+]
+exclude = ["kernels"]
+resolver = "2"
+
