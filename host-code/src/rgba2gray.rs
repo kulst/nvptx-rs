@@ -2,53 +2,63 @@ use cudarc::{
     driver::{CudaDevice, DriverError, LaunchAsync, LaunchConfig},
     nvrtc::Ptx,
 };
-use rand::{distributions::Standard, prelude::*};
 use std::env;
-use std::iter;
-use image::{ColorType, Pixel, Rgba, RgbaImage};
 
 fn main() -> Result<(), DriverError> {
-
     let mut args = env::args_os().skip(1);
 
     let dev = CudaDevice::new(0)?;
 
     // Load the kernel file specified in the first command line argument
     dev.load_ptx(
-        Ptx::from_file(args.next().unwrap()),
+        Ptx::from_src(include_str!(
+            "../../kernels/target/nvptx64-nvidia-cuda/release/kernels.ptx"
+        )),
         "kernels",
         &["add", "memcpy", "rgba2gray"],
     )?;
 
     // and then retrieve the function with `get_func`
-    let f = dev.get_func("kernels", "memcpy").unwrap();
-
-    // Specify size of input array
-    const BLOCK_SIZE: usize = 32;
+    let f = dev.get_func("kernels", "rgba2gray").unwrap();
 
     let img = image::open(args.next().unwrap()).unwrap().to_rgba8();
 
-    let h_rgba = img.as_ptr();
-    host memory and populate it (input arrays with random data, output array with 0)
-    let mut rng = rand::thread_rng().sample_iter(Standard);
+    let width = img.width();
+    let height = img.height();
 
-    let h_a: Vec<f32> = rng.by_ref().take(SIZE).collect();
-    let mut h_b: Vec<f32> = iter::repeat(0f32).take(SIZE).collect();
+    let mut img_grayscale = image::GrayImage::new(width, height);
 
     // Allocate device memory and copy host values to it
-    let d_a = dev.htod_sync_copy(&h_a)?;
-    let mut d_b = dev.alloc_zeros::<f32>(SIZE)?;
+    let d_rgba = dev.htod_sync_copy(&img)?;
+    let mut d_grayscale =
+        dev.alloc_zeros::<u8>(usize::try_from(width).unwrap() * usize::try_from(height).unwrap())?;
 
-    // Specify number of threads and launch the kernel
-    let n = SIZE as u32;
-    let cfg = LaunchConfig::for_num_elems(n);
-    unsafe { f.launch(cfg, (&mut d_b, &d_a, n as usize)) }?;
+    // Specify number of threads and launch the kernel let n = SIZE as u32;
+    let (x_threads, y_threads, z_threads) = (32, 32, 1);
+    let (x_blocks, y_blocks, z_blocks) = (
+        (width + x_threads - 1) / x_threads,
+        (height + y_threads - 1) / y_threads,
+        1,
+    );
+    let cfg = LaunchConfig {
+        grid_dim: (x_blocks, y_blocks, z_blocks),
+        block_dim: (x_threads, y_threads, z_threads),
+        shared_mem_bytes: 0,
+    };
+    unsafe {
+        f.launch(
+            cfg,
+            (&d_rgba, &mut d_grayscale, width as i32, height as i32),
+        )
+    }?;
 
     // Deallocate device memory and copy it back to host if necessary
-    dev.sync_reclaim(d_a)?;
-    dev.dtoh_sync_copy_into(&d_b, &mut h_b)?;
-
+    dev.dtoh_sync_copy_into(&d_grayscale, &mut img_grayscale)?;
+    let _ = dev.sync_reclaim(d_rgba)?;
+    let _ = dev.sync_reclaim(d_grayscale)?;
     // Verify correctness
-    assert_eq!(h_a, h_b);
+
+    img_grayscale.save(args.next().unwrap()).unwrap();
+
     Ok(())
 }
