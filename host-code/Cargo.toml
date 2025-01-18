@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cudarc = { version = "0.12.1", features = ["cuda-version-from-build-system"]}
+cudarc = { version = "0.13.0", features = ["cuda-version-from-build-system"]}
 image = "0.25.3"
 rand = "0.8.5"
 
