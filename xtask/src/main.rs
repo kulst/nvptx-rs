@@ -95,6 +95,9 @@ fn cuda_device_capability() -> Result<i32, DynError> {
         .args(["--query-gpu=compute_cap", "--format=csv,noheader"])
         .output()?;
     let capability = String::from_utf8(capability.stdout)?
+        .lines()
+        .next()
+        .unwrap()
         .trim_end()
         .parse::<f64>()?;
     Ok((capability * 10.) as i32)
