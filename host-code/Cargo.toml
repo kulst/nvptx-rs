@@ -4,9 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cudarc = { version = "0.13.0", features = ["cuda-version-from-build-system"]}
+cudarc = {path = "../../cudarc", features = ["cuda-version-from-build-system"]}
 image = "0.25.3"
 rand = "0.8.5"
+affinity = "0.1.2"
+clap = { version = "4.5.26", features = ["derive"] }
+cpu-time = "1.0.0"
+rayon = "1.10.0"
+
 
 [[bin]]
 name = "add"
@@ -17,3 +22,9 @@ path = "src/memcpy.rs"
 [[bin]]
 name = "rgba2gray"
 path = "src/rgba2gray.rs"
+[[bin]]
+name = "texture-memcpy"
+path = "src/texture_memcpy.rs"
+[[bin]]
+name = "himeno"
+path = "src/himeno.rs"
