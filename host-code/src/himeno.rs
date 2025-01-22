@@ -191,12 +191,12 @@ fn main() -> Result<(), DriverError> {
     let mut d_wrk2 = dev.alloc_zeros::<f32>(rows * cols * deps).unwrap();
     let mut d_gosa = dev.alloc_zeros::<f32>(1).unwrap();
     let omega = 0.8f32;
-    let (threads_x, threads_y) = (64, 4);
+    let (threads_x, threads_y) = (1, 64);
     let cfg = LaunchConfig {
         grid_dim: (
-            (deps as u32 + threads_x - 1) / threads_x,
-            (cols as u32 + threads_y - 1) / threads_y,
-            1,
+            // (deps as u32 + threads_x - 1) / threads_x,
+            // (cols as u32 + threads_y - 1) / threads_y,
+            1, 1, 1,
         ),
         block_dim: (threads_x, threads_y, 1),
         shared_mem_bytes: std::mem::size_of::<f32>() as u32 * (threads_x + 2) * (threads_y + 2) * 3,
