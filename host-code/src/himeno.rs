@@ -1,4 +1,3 @@
-use affinity::get_thread_affinity;
 use clap::{command, Parser, ValueEnum};
 use cudarc::{
     driver::{
@@ -6,14 +5,8 @@ use cudarc::{
     },
     nvrtc::Ptx,
 };
-use rand::{distributions::Standard, prelude::*};
 use rayon::{iter::repeatn, prelude::*};
-use std::{
-    iter::{self, repeat_n},
-    mem::MaybeUninit,
-    ops::Index,
-    ptr::null,
-};
+use std::ops::Index;
 // Himeno benchmark in Rust using nvptx
 #[derive(Parser)]
 #[command(version, about)]
@@ -148,21 +141,6 @@ fn main() -> Result<(), DriverError> {
         flags: 0,
     };
 
-    // let resource_desc = CUDA_RESOURCE_DESC {
-    //     resType: CUresourcetype::CU_RESOURCE_TYPE_PITCH2D,
-    //     res: CUDA_RESOURCE_DESC_st__bindgen_ty_1 {
-    //         pitch2D: CUDA_RESOURCE_DESC_st__bindgen_ty_1__bindgen_ty_4 {
-    //             devPtr: d_p,
-    //             format: CUarray_format_enum::CU_AD_FORMAT_FLOAT,
-    //             numChannels: 1,
-    //             pitchInBytes: std::mem::size_of::<f32>() * p.cols * p.deps,
-    //             width: p.cols * p.deps,
-    //             height: p.rows,
-    //         },
-    //     },
-    //     flags: 0,
-    // };
-
     let texture_desc = CUDA_TEXTURE_DESC {
         addressMode: [
             CUaddress_mode_enum::CU_TR_ADDRESS_MODE_CLAMP,
@@ -191,12 +169,12 @@ fn main() -> Result<(), DriverError> {
     let mut d_wrk2 = dev.alloc_zeros::<f32>(rows * cols * deps).unwrap();
     let mut d_gosa = dev.alloc_zeros::<f32>(1).unwrap();
     let omega = 0.8f32;
-    let (threads_x, threads_y) = (1, 64);
+    let (threads_x, threads_y) = (128, 4);
     let cfg = LaunchConfig {
         grid_dim: (
-            // (deps as u32 + threads_x - 1) / threads_x,
-            // (cols as u32 + threads_y - 1) / threads_y,
-            1, 1, 1,
+            (deps as u32 + threads_x - 1) / threads_x,
+            (cols as u32 + threads_y - 1) / threads_y,
+            1,
         ),
         block_dim: (threads_x, threads_y, 1),
         shared_mem_bytes: std::mem::size_of::<f32>() as u32 * (threads_x + 2) * (threads_y + 2) * 3,
@@ -241,36 +219,4 @@ fn main() -> Result<(), DriverError> {
     println!("gosa: {gosa}");
 
     Ok(())
-}
-
-#[test]
-fn test_cuda_malloc_3d() {
-    let mut ptr = 0u64;
-    let mut pitch = 0;
-
-    let dev = CudaDevice::new(0).unwrap();
-
-    unsafe {
-        cudarc::driver::sys::lib()
-            // rows are 4*64 byte = 256 byte wide
-            // we request 64 columns
-            // pitch gets written to 512
-            // lets assume size_of::<T> = 4
-            // then the address of row 44 and column 23 would be calculated like this:
-            // linear address space:    row * 64 + col = 44 * 64 + 23 = 2839
-            // pitch address space: (row * pitch) / 4 + column
-            .cuMemAllocPitch_v2(&mut ptr, &mut pitch, 4 * 64 * 64, 64, 16)
-            .result()
-            .unwrap();
-    }
-
-    println!("pitched: {:?}", pitch);
-    println!("ptr: {:?}", ptr);
-
-    unsafe {
-        cudarc::driver::sys::lib()
-            .cuMemFree_v2(ptr)
-            .result()
-            .unwrap();
-    }
 }

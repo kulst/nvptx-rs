@@ -5,7 +5,6 @@ use cudarc::{
     nvrtc::Ptx,
 };
 use rand::{distributions::Standard, prelude::*};
-use std::{iter, mem::MaybeUninit, ptr::null};
 
 fn main() -> Result<(), DriverError> {
     let dev = CudaDevice::new(0)?;
@@ -85,36 +84,4 @@ fn main() -> Result<(), DriverError> {
     assert_eq!(h_a, h_b);
 
     Ok(())
-}
-
-#[test]
-fn test_cuda_malloc_3d() {
-    let mut ptr = 0u64;
-    let mut pitch = 0;
-
-    let dev = CudaDevice::new(0).unwrap();
-
-    unsafe {
-        cudarc::driver::sys::lib()
-            // rows are 4*64 byte = 256 byte wide
-            // we request 64 columns
-            // pitch gets written to 512
-            // lets assume size_of::<T> = 4
-            // then the address of row 44 and column 23 would be calculated like this:
-            // linear address space:    row * 64 + col = 44 * 64 + 23 = 2839
-            // pitch address space: (row * pitch) / 4 + column  
-            .cuMemAllocPitch_v2(&mut ptr, &mut pitch, 4*64*64, 64, 16)
-            .result()
-            .unwrap();
-    }
-
-    println!("pitched: {:?}", pitch);
-    println!("ptr: {:?}", ptr);
-
-    unsafe {
-        cudarc::driver::sys::lib()
-            .cuMemFree_v2(ptr)
-            .result()
-            .unwrap();
-    }
 }

@@ -1,5 +1,3 @@
-use core::marker::PhantomData;
-
 use crate::intrinsics::_tex_1d_fetch_f32;
 
 #[repr(C)]

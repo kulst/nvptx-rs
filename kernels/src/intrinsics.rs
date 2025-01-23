@@ -76,7 +76,7 @@ pub unsafe fn _atomic_add_f32(address: *mut f32, val: f32) -> f32 {
     let old: f32;
     unsafe {
         asm!(
-            "atom.global.add.f32 {old}, [{address}], {val};",
+            "atom.add.f32 {old}, [{address}], {val};",
             old = out(reg32) old,
             address = in(reg64) address,
             val = in(reg32) val,

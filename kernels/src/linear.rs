@@ -17,13 +17,13 @@ impl<T: Copy> Linear2D<T> {
     #[inline]
     pub unsafe fn get(&self, col: isize, row: isize) -> T {
         let index = col + row * self.width;
-        self.base.offset(index).read_volatile()
+        self.base.offset(index).read()
     }
 
     #[inline]
     pub unsafe fn set(&mut self, val: T, col: isize, row: isize) {
         let index = col + row * self.width;
-        self.base.cast_mut().offset(index).write_volatile(val)
+        self.base.cast_mut().offset(index).write(val)
     }
 }
 pub struct Linear3D<T> {
@@ -46,13 +46,13 @@ impl<T: Copy> Linear3D<T> {
     #[inline]
     pub unsafe fn get(&self, col: isize, row: isize, plane: isize) -> T {
         let index = col + row * self.width + plane * self.width * self.height;
-        self.base.offset(index).read_volatile()
+        self.base.offset(index).read()
     }
 
     #[inline]
     pub unsafe fn set(&mut self, val: T, col: isize, row: isize, plane: isize) {
         let index = col + row * self.width + plane * self.width * self.height;
-        self.base.cast_mut().offset(index).write_volatile(val)
+        self.base.cast_mut().offset(index).write(val)
     }
 }
 
@@ -81,7 +81,7 @@ impl<T: Copy> Linear4D<T> {
             + row * self.width
             + plane * self.width * self.height
             + id * self.width * self.height * self.depth;
-        self.base.offset(index).read_volatile()
+        self.base.offset(index).read()
     }
 
     #[inline]
@@ -90,6 +90,6 @@ impl<T: Copy> Linear4D<T> {
             + row * self.width
             + plane * self.width * self.height
             + id * self.width * self.height * self.depth;
-        self.base.cast_mut().offset(index).write_volatile(val);
+        self.base.cast_mut().offset(index).write(val);
     }
 }

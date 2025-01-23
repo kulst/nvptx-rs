@@ -87,6 +87,14 @@ pub unsafe extern "ptx-kernel" fn texture_memcpy(dst: *mut f32, src: c_ulonglong
 
 pub type TexObject = u64;
 
+/// kernel to calculate one iteration of the himeno benchmark
+///
+/// SAFETY:
+///
+/// - dynamic shared memory must be of the size
+///     `size_of::<f32>() * (_block_dim_x() + 2) * (_block_dim_y() + 2) * 3`
+/// - kernel must be called with _block_dim_x() > 1 and _block_dim_y() > 1
+/// - kernel should not be called with _block_dim_z() > 1
 #[no_mangle]
 pub unsafe extern "ptx-kernel" fn himeno(
     p: TexObject,
@@ -104,41 +112,46 @@ pub unsafe extern "ptx-kernel" fn himeno(
 ) {
     // initialize dynamic shared memory
     _init_dyn_shared_mem();
-    // thread_idx_x in block
+    // thread id x in block
     let tid_x = _thread_idx_x() as isize;
-    // thread_idx_y in block
+    // thread id y in block
     let tid_y = _thread_idx_y() as isize;
-    // calculate local thread id with 2D thread blocks tid.y * block_dim.x + tid.x
-    let thread_id_local = tid_y * _block_dim_x() as isize + tid_x;
-    // calculate local thread count with 2D thread blocks block_dim.x * block_dim.y
-    let thread_count_local = (_block_dim_x() * _block_dim_y()) as isize;
-    // calculate global thread id in x direction
-    let thread_idx_global = _block_dim_x() * _block_idx_x() + _thread_idx_x();
-    // calculate global number of threads in x direction
-    let thread_count_x_global = _block_dim_x() * _grid_dim_x();
-    // calculate global thread id in x direction
-    let thread_idy_global = _block_dim_y() * _block_idx_y() + _thread_idx_y();
-    // global number of threads in y direction
-    let thread_count_y_global = _block_dim_y() * _grid_dim_y();
-
-    let blocks_x = (k - 2 + _block_dim_x() - 1) / _block_dim_x();
-    let blocks_y = (j - 2 + _block_dim_y() - 1) / _block_dim_y();
-
-    let mut residual = 0f64;
-
+    // thread id in block
+    let tid = tid_y * _block_dim_x() as isize + tid_x;
+    // number of threads per block
+    let nthreads = (_block_dim_x() * _block_dim_y()) as isize;
+    // thread id x in grid
+    let gtid_x = _block_dim_x() * _block_idx_x() + _thread_idx_x();
+    // number of threads in x in grid
+    let gnthreads_x = _block_dim_x() * _grid_dim_x();
+    // thread id y in grid
+    let gtid_y = _block_dim_y() * _block_idx_y() + _thread_idx_y();
+    // number of threads in y in grid
+    let gnthreads_y = _block_dim_y() * _grid_dim_y();
+    // number of blocks in x necessary to process the input
+    let nblocks_x = (k - 2 + _block_dim_x() - 1) / _block_dim_x();
+    // number of blocks in y necessary to process the input
+    let nblocks_y = (j - 2 + _block_dim_y() - 1) / _block_dim_y();
+    // residual
+    let mut residual = 0f32;
+    // associate p as a TexObject with 3 dimensions
     let mut p = TexObjectF32_3D::new(p, k, j, i);
-
+    // shared memory rows for p_sh_[top,mid,bot]
     let smem_rows = (_block_dim_y() + 2) as isize;
+    // shared memory columns for p_sh_[top,mid,bot]
     let smem_cols = (_block_dim_x() + 2) as isize;
-
+    // number of items for p_sh_[top,mid,bot]
     let smem_len = (smem_rows * smem_cols) as usize;
-
+    // associate p_sh_top as Linear2D in shared memory
     let p_sh_top = _dynamic_shared_mem::<f32>(smem_len);
     let mut p_sh_top = Linear2D::new(p_sh_top, smem_cols, smem_rows);
+    // associate p_sh_mid as Linear2D in shared memory
     let p_sh_mid = _dynamic_shared_mem::<f32>(smem_len);
     let mut p_sh_mid = Linear2D::new(p_sh_mid, smem_cols, smem_rows);
+    // associate p_sh_bot as Linear2D in shared memory
     let p_sh_bot = _dynamic_shared_mem::<f32>(smem_len);
     let mut p_sh_bot = Linear2D::new(p_sh_bot, smem_cols, smem_rows);
+    // associate other arrays as Linear4D or Linear3D
     let a = Linear4D::new(a, k as isize, j as isize, i as isize, 4);
     let b = Linear4D::new(b, k as isize, j as isize, i as isize, 3);
     let c = Linear4D::new(c, k as isize, j as isize, i as isize, 3);
@@ -146,192 +159,102 @@ pub unsafe extern "ptx-kernel" fn himeno(
     let mut wrk2 = Linear3D::new(wrk2, k as isize, j as isize, i as isize);
     let bnd = Linear3D::new(bnd, k as isize, j as isize, i as isize);
 
-    let p_sh_top_tmp = p_sh_top.clone();
-
-    // iterate in k direction
-    let mut bx = _block_idx_x();
-    let mut thread_idx_global_tmp = thread_idx_global;
-    while bx < blocks_x {
-        // iterate in j direction
-        let mut by = _block_idx_y();
-        let mut thread_idy_global_tmp = thread_idy_global;
-        while by < blocks_y {
+    // iterate over necessary blocks in x direction (k direction)
+    let mut bid_x = _block_idx_x();
+    // during iteration we need to check if we are still in the domain by
+    // using the thread id in x in the grid. We add the number of threads that
+    // are present in x in the grid after each iteration
+    let mut gtid_x_tmp = gtid_x;
+    while bid_x < nblocks_x {
+        // iterate over necessary blocks in y direction (j direction)
+        let mut bid_y = _block_idx_y();
+        // during iteration we need to check if we are still in the domain by
+        // using the thread id in y in the grid. We add the number of threads that
+        // are present in y in the grid after each iteration
+        let mut gtid_y_tmp = gtid_y;
+        while bid_y < nblocks_y {
             let mut z = 0;
             // load bottom plane
-            if thread_idx_global_tmp < k - 2 && thread_idy_global_tmp < j - 2 {
-                p_sh_bot.set(
-                    p.get(thread_idx_global_tmp, thread_idy_global_tmp, z),
-                    tid_x,
-                    tid_y,
-                );
+            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
+                p_sh_bot.set(p.get(gtid_x_tmp, gtid_y_tmp, z), tid_x, tid_y);
             }
             _syncthreads();
-            if thread_idx_global_tmp < k - 2 && thread_idy_global_tmp < j - 2 {
-                p_sh_bot.set(
-                    p.get(thread_idx_global_tmp + 2, thread_idy_global_tmp, z),
-                    tid_x + 2,
-                    tid_y,
-                );
+            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
+                p_sh_bot.set(p.get(gtid_x_tmp + 2, gtid_y_tmp, z), tid_x + 2, tid_y);
             }
             _syncthreads();
-            if thread_idx_global_tmp < k - 2 && thread_idy_global_tmp < j - 2 {
-                p_sh_bot.set(
-                    p.get(thread_idx_global_tmp, thread_idy_global_tmp + 2, z),
-                    tid_x,
-                    tid_y + 2,
-                );
+            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
+                p_sh_bot.set(p.get(gtid_x_tmp, gtid_y_tmp + 2, z), tid_x, tid_y + 2);
             }
             _syncthreads();
-            if thread_idx_global_tmp < k - 2 && thread_idy_global_tmp < j - 2 {
+            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
                 p_sh_bot.set(
-                    p.get(thread_idx_global_tmp + 2, thread_idy_global_tmp + 2, z),
+                    p.get(gtid_x_tmp + 2, gtid_y_tmp + 2, z),
                     tid_x + 2,
                     tid_y + 2,
                 );
             }
-            _syncthreads();
             // load mid plane
-            if thread_idx_global_tmp < k - 2 && thread_idy_global_tmp < j - 2 {
-                p_sh_mid.set(
-                    p.get(thread_idx_global_tmp, thread_idy_global_tmp, z + 1),
-                    tid_x,
-                    tid_y,
-                );
+            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
+                p_sh_mid.set(p.get(gtid_x_tmp, gtid_y_tmp, z + 1), tid_x, tid_y);
             }
             _syncthreads();
-            if thread_idx_global_tmp < k - 2 && thread_idy_global_tmp < j - 2 {
-                p_sh_mid.set(
-                    p.get(thread_idx_global_tmp + 2, thread_idy_global_tmp, z + 1),
-                    tid_x + 2,
-                    tid_y,
-                );
+            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
+                p_sh_mid.set(p.get(gtid_x_tmp + 2, gtid_y_tmp, z + 1), tid_x + 2, tid_y);
             }
             _syncthreads();
-            if thread_idx_global_tmp < k - 2 && thread_idy_global_tmp < j - 2 {
-                p_sh_mid.set(
-                    p.get(thread_idx_global_tmp, thread_idy_global_tmp + 2, z + 1),
-                    tid_x,
-                    tid_y + 2,
-                );
+            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
+                p_sh_mid.set(p.get(gtid_x_tmp, gtid_y_tmp + 2, z + 1), tid_x, tid_y + 2);
             }
             _syncthreads();
-            if thread_idx_global_tmp < k - 2 && thread_idy_global_tmp < j - 2 {
+            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
                 p_sh_mid.set(
-                    p.get(thread_idx_global_tmp + 2, thread_idy_global_tmp + 2, z + 1),
+                    p.get(gtid_x_tmp + 2, gtid_y_tmp + 2, z + 1),
                     tid_x + 2,
                     tid_y + 2,
                 );
             }
             // iterate in i direction
             while z < i - 2 {
-                _syncthreads();
                 // load top plane
-                if thread_idx_global_tmp < k - 2 && thread_idy_global_tmp < j - 2 {
-                    p_sh_top.set(
-                        p.get(thread_idx_global_tmp, thread_idy_global_tmp, z + 2),
-                        tid_x,
-                        tid_y,
-                    );
+                if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
+                    p_sh_top.set(p.get(gtid_x_tmp, gtid_y_tmp, z + 2), tid_x, tid_y);
                 }
                 _syncthreads();
-                if thread_idx_global_tmp < k - 2 && thread_idy_global_tmp < j - 2 {
-                    p_sh_top.set(
-                        p.get(thread_idx_global_tmp + 2, thread_idy_global_tmp, z + 2),
-                        tid_x + 2,
-                        tid_y,
-                    );
+                if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
+                    p_sh_top.set(p.get(gtid_x_tmp + 2, gtid_y_tmp, z + 2), tid_x + 2, tid_y);
                 }
                 _syncthreads();
-                if thread_idx_global_tmp < k - 2 && thread_idy_global_tmp < j - 2 {
-                    p_sh_top.set(
-                        p.get(thread_idx_global_tmp, thread_idy_global_tmp + 2, z + 2),
-                        tid_x,
-                        tid_y + 2,
-                    );
+                if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
+                    p_sh_top.set(p.get(gtid_x_tmp, gtid_y_tmp + 2, z + 2), tid_x, tid_y + 2);
                 }
                 _syncthreads();
-                if thread_idx_global_tmp < k - 2 && thread_idy_global_tmp < j - 2 {
+                if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
                     p_sh_top.set(
-                        p.get(thread_idx_global_tmp + 2, thread_idy_global_tmp + 2, z + 2),
+                        p.get(gtid_x_tmp + 2, gtid_y_tmp + 2, z + 2),
                         tid_x + 2,
                         tid_y + 2,
                     );
                 }
                 _syncthreads();
-                if thread_idx_global_tmp < k - 2 && thread_idy_global_tmp < j - 2 {
-                    let thread_idx_global_tmp = thread_idx_global_tmp as isize;
-                    let thread_idy_global_tmp = thread_idy_global_tmp as isize;
-
-                    let a0 = a.get(
-                        thread_idx_global_tmp + 1,
-                        thread_idy_global_tmp + 1,
-                        z as isize + 1,
-                        0,
-                    );
-                    let a1 = a.get(
-                        thread_idx_global_tmp + 1,
-                        thread_idy_global_tmp + 1,
-                        z as isize + 1,
-                        1,
-                    );
-                    let a2 = a.get(
-                        thread_idx_global_tmp + 1,
-                        thread_idy_global_tmp + 1,
-                        z as isize + 1,
-                        2,
-                    );
-                    let a3 = a.get(
-                        thread_idx_global_tmp + 1,
-                        thread_idy_global_tmp + 1,
-                        z as isize + 1,
-                        3,
-                    );
-                    let b0 = b.get(
-                        thread_idx_global_tmp + 1,
-                        thread_idy_global_tmp + 1,
-                        z as isize + 1,
-                        0,
-                    );
-                    let b1 = b.get(
-                        thread_idx_global_tmp + 1,
-                        thread_idy_global_tmp + 1,
-                        z as isize + 1,
-                        1,
-                    );
-                    let b2 = b.get(
-                        thread_idx_global_tmp + 1,
-                        thread_idy_global_tmp + 1,
-                        z as isize + 1,
-                        2,
-                    );
-                    let c0 = c.get(
-                        thread_idx_global_tmp + 1,
-                        thread_idy_global_tmp + 1,
-                        z as isize + 1,
-                        0,
-                    );
-                    let c1 = c.get(
-                        thread_idx_global_tmp + 1,
-                        thread_idy_global_tmp + 1,
-                        z as isize + 1,
-                        1,
-                    );
-                    let c2 = c.get(
-                        thread_idx_global_tmp + 1,
-                        thread_idy_global_tmp + 1,
-                        z as isize + 1,
-                        2,
-                    );
-                    let bnd = bnd.get(
-                        thread_idx_global_tmp + 1,
-                        thread_idy_global_tmp + 1,
-                        z as isize + 1,
-                    );
-                    let wrk1 = wrk1.get(
-                        thread_idx_global_tmp + 1,
-                        thread_idy_global_tmp + 1,
-                        z as isize + 1,
-                    );
+                if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
+                    // we need those as isize so we shadow them
+                    let gtid_x_tmp = gtid_x_tmp as isize;
+                    let gtid_y_tmp = gtid_y_tmp as isize;
+                    // coefficients are loaded for the index we calculate
+                    let a0 = a.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 0);
+                    let a1 = a.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 1);
+                    let a2 = a.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 2);
+                    let a3 = a.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 3);
+                    let b0 = b.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 0);
+                    let b1 = b.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 1);
+                    let b2 = b.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 2);
+                    let c0 = c.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 0);
+                    let c1 = c.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 1);
+                    let c2 = c.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 2);
+                    let bnd = bnd.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1);
+                    let wrk1 = wrk1.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1);
+                    // do iterative jacobi
                     let s0 = a0 * p_sh_top.get(tid_x + 1, tid_y + 1)
                         + a1 * p_sh_mid.get(tid_x + 1, tid_y + 2)
                         + a2 * p_sh_mid.get(tid_x + 2, tid_y + 1)
@@ -354,69 +277,11 @@ pub unsafe extern "ptx-kernel" fn himeno(
                     let ss = (s0 * a3 - p_sh_mid.get(tid_x + 1, tid_y + 1)) * bnd;
                     wrk2.set(
                         p_sh_mid.get(tid_x + 1, tid_y + 1) + omega * ss,
-                        thread_idx_global_tmp + 1,
-                        thread_idy_global_tmp + 1,
+                        gtid_x_tmp + 1,
+                        gtid_y_tmp + 1,
                         z as isize + 1,
                     );
-
-                    residual += ss as f64 * ss as f64;
-
-                    #[repr(C)]
-                    struct P(
-                        i32,
-                        i32,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                    );
-                    if thread_idx_global == 0 && thread_idy_global == 0 {
-                        core::arch::nvptx::vprintf(
-                            "gidx: %d, gidy: %d, residual %f, \
-                        ss: %f, a0: %f, a1: %f, a2: %f, \
-                        a3: %f, b0: %f, b1: %f, b2: %f, \
-                        c0: %f, c1: %f, c2: %f, bnd: %f, wrk1: %f\n"
-                                .as_ptr(),
-                            core::mem::transmute(&P(
-                                thread_idx_global_tmp as i32,
-                                thread_idy_global_tmp as i32,
-                                residual.into(),
-                                p_sh_top.get(tid_x + 1, tid_y + 1).into(),
-                                p_sh_mid.get(tid_x + 1, tid_y + 2).into(),
-                                p_sh_mid.get(tid_x + 2, tid_y + 1).into(),
-                                p_sh_top.get(tid_x + 1, tid_y + 2).into(),
-                                p_sh_top.get(tid_x + 1, tid_y).into(),
-                                p_sh_bot.get(tid_x + 1, tid_y + 2).into(),
-                                p_sh_bot.get(tid_x + 1, tid_y).into(),
-                                p_sh_mid.get(tid_x + 2, tid_y + 2).into(),
-                                p_sh_mid.get(tid_x, tid_y + 2).into(),
-                                p_sh_mid.get(tid_x + 2, tid_y).into(),
-                                p_sh_mid.get(tid_x, tid_y).into(),
-                                p_sh_top.get(tid_x + 2, tid_y + 1).into(),
-                                p_sh_top.get(tid_x, tid_y + 1).into(),
-                                p_sh_bot.get(tid_x + 2, tid_y + 1).into(),
-                                p_sh_bot.get(tid_x, tid_y + 1).into(),
-                                p_sh_bot.get(tid_x + 1, tid_y + 1).into(),
-                                p_sh_mid.get(tid_x + 1, tid_y).into(),
-                                p_sh_mid.get(tid_x, tid_y + 1).into(),
-                            )),
-                        );
-                    }
+                    residual += ss * ss;
                 }
                 // swap smem planes
                 let tmp = p_sh_bot;
@@ -426,38 +291,29 @@ pub unsafe extern "ptx-kernel" fn himeno(
                 _syncthreads();
                 z += 1;
             }
-            by += _grid_dim_y();
-            thread_idy_global_tmp += thread_count_y_global;
+            bid_y += _grid_dim_y();
+            gtid_y_tmp += gnthreads_y;
         }
-        bx += _grid_dim_x();
-        thread_idx_global_tmp += thread_count_x_global;
+        bid_x += _grid_dim_x();
+        gtid_x_tmp += gnthreads_x;
     }
 
+    p_sh_top.set(residual, tid, 0);
     _syncthreads();
-    // #[repr(C)]
-    // struct P(i32, i32, f64);
-    // core::arch::nvptx::vprintf(
-    //     "gidx: %d, gidy: %d, residual %f\n".as_ptr(),
-    //     core::mem::transmute(&P(thread_idx_global, thread_idy_global, residual.into())),
-    // );
-    // _atomic_add_f32(gosa, residual as f32);
-    // now write the residual of each thread block into the top plane in shared memory
-    // let mut p_sh_top = p_sh_top_tmp;
-    p_sh_top.set(residual as f32, thread_id_local, 0);
-    _syncthreads();
-    // now reduce the residual of each thread block
-    let mut workers = get_init_worker_count(thread_count_local);
-    while workers > 0 {
-        if thread_id_local < workers && (thread_id_local + workers) < thread_count_local {
-            let my = p_sh_top.get(thread_id_local, 0);
-            let other = p_sh_top.get(thread_id_local + workers, 0);
-            p_sh_top.set(my + other, thread_id_local, 0);
+    // reduce the residual of each thread block
+    let mut nworkers = get_init_worker_count(nthreads);
+    while nworkers > 0 {
+        if tid < nworkers && (tid + nworkers) < nthreads {
+            let my = p_sh_top.get(tid, 0);
+            let other = p_sh_top.get(tid + nworkers, 0);
+            p_sh_top.set(my + other, tid, 0);
         }
         _syncthreads();
-        workers /= 2;
+        nworkers /= 2;
     }
+    // writing final result back atomically
     if tid_x == 0 && tid_y == 0 {
-        _atomic_add_f32(gosa, p_sh_top.get(thread_id_local, 0));
+        _atomic_add_f32(gosa, p_sh_top.get(tid, 0));
     }
 }
 
@@ -471,6 +327,12 @@ pub unsafe extern "ptx-kernel" fn add_without_wrap(a: i32, b: i32, c: *mut i32) 
 pub unsafe extern "ptx-kernel" fn add_wrap(a: i32, b: i32, c: *mut i32) {
     let thread_id = _thread_idx_x() + _block_dim_x() * _block_idx_x();
     *c.offset(thread_id as isize) = a.wrapping_add(b);
+}
+
+#[no_mangle]
+pub unsafe extern "ptx-kernel" fn f32_test(input: *const f32, output: *mut f32) {
+    let gtid_x = _block_idx_x() * _grid_dim_x() + _thread_idx_x();
+    _atomic_add_f32(output, *input.offset(gtid_x as isize) * 2f32);
 }
 
 #[panic_handler]
