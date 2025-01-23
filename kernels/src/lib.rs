@@ -159,102 +159,60 @@ pub unsafe extern "ptx-kernel" fn himeno(
     let mut wrk2 = Linear3D::new(wrk2, k as isize, j as isize, i as isize);
     let bnd = Linear3D::new(bnd, k as isize, j as isize, i as isize);
 
-    // iterate over necessary blocks in x direction (k direction)
-    let mut bid_x = _block_idx_x();
     // during iteration we need to check if we are still in the domain by
     // using the thread id in x in the grid. We add the number of threads that
     // are present in x in the grid after each iteration
-    let mut gtid_x_tmp = gtid_x;
-    while bid_x < nblocks_x {
-        // iterate over necessary blocks in y direction (j direction)
-        let mut bid_y = _block_idx_y();
+    // we shadow the old value with the following syntax
+    let mut gtid_x_ = gtid_x;
+    // iterate over necessary blocks in x direction (k direction)
+    for _bid_x in (_block_idx_x()..nblocks_x).step_by(_grid_dim_x() as usize) {
         // during iteration we need to check if we are still in the domain by
         // using the thread id in y in the grid. We add the number of threads that
         // are present in y in the grid after each iteration
-        let mut gtid_y_tmp = gtid_y;
-        while bid_y < nblocks_y {
-            let mut z = 0;
-            // load bottom plane
-            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
-                p_sh_bot.set(p.get(gtid_x_tmp, gtid_y_tmp, z), tid_x, tid_y);
-            }
-            _syncthreads();
-            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
-                p_sh_bot.set(p.get(gtid_x_tmp + 2, gtid_y_tmp, z), tid_x + 2, tid_y);
-            }
-            _syncthreads();
-            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
-                p_sh_bot.set(p.get(gtid_x_tmp, gtid_y_tmp + 2, z), tid_x, tid_y + 2);
-            }
-            _syncthreads();
-            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
-                p_sh_bot.set(
-                    p.get(gtid_x_tmp + 2, gtid_y_tmp + 2, z),
-                    tid_x + 2,
-                    tid_y + 2,
-                );
-            }
-            // load mid plane
-            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
-                p_sh_mid.set(p.get(gtid_x_tmp, gtid_y_tmp, z + 1), tid_x, tid_y);
-            }
-            _syncthreads();
-            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
-                p_sh_mid.set(p.get(gtid_x_tmp + 2, gtid_y_tmp, z + 1), tid_x + 2, tid_y);
-            }
-            _syncthreads();
-            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
-                p_sh_mid.set(p.get(gtid_x_tmp, gtid_y_tmp + 2, z + 1), tid_x, tid_y + 2);
-            }
-            _syncthreads();
-            if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
-                p_sh_mid.set(
-                    p.get(gtid_x_tmp + 2, gtid_y_tmp + 2, z + 1),
-                    tid_x + 2,
-                    tid_y + 2,
-                );
+        let mut gtid_y_ = gtid_y;
+        // iterate over necessary blocks in y direction (j direction)
+        for _bid_y in (_block_idx_y()..nblocks_y).step_by(_grid_dim_y() as usize) {
+            // load bottom and mid plane if in domain
+            if gtid_x_ < k - 2 && gtid_y_ < j - 2 {
+                p_sh_bot.set(p.get(gtid_x_, gtid_y_, 0), tid_x, tid_y);
+                p_sh_bot.set(p.get(gtid_x_ + 2, gtid_y_, 0), tid_x + 2, tid_y);
+                p_sh_bot.set(p.get(gtid_x_, gtid_y_ + 2, 0), tid_x, tid_y + 2);
+                p_sh_bot.set(p.get(gtid_x_ + 2, gtid_y_ + 2, 0), tid_x + 2, tid_y + 2);
+                p_sh_mid.set(p.get(gtid_x_, gtid_y_, 1), tid_x, tid_y);
+                p_sh_mid.set(p.get(gtid_x_ + 2, gtid_y_, 1), tid_x + 2, tid_y);
+                p_sh_mid.set(p.get(gtid_x_, gtid_y_ + 2, 1), tid_x, tid_y + 2);
+                p_sh_mid.set(p.get(gtid_x_ + 2, gtid_y_ + 2, 1), tid_x + 2, tid_y + 2);
             }
             // iterate in i direction
-            while z < i - 2 {
-                // load top plane
-                if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
-                    p_sh_top.set(p.get(gtid_x_tmp, gtid_y_tmp, z + 2), tid_x, tid_y);
+            for z in 0..(i - 2) {
+                // load top plane if in domain
+                if gtid_x_ < k - 2 && gtid_y_ < j - 2 {
+                    p_sh_top.set(p.get(gtid_x_, gtid_y_, z + 2), tid_x, tid_y);
+                    p_sh_top.set(p.get(gtid_x_ + 2, gtid_y_, z + 2), tid_x + 2, tid_y);
+                    p_sh_top.set(p.get(gtid_x_, gtid_y_ + 2, z + 2), tid_x, tid_y + 2);
+                    p_sh_top.set(p.get(gtid_x_ + 2, gtid_y_ + 2, z + 2), tid_x + 2, tid_y + 2);
                 }
                 _syncthreads();
-                if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
-                    p_sh_top.set(p.get(gtid_x_tmp + 2, gtid_y_tmp, z + 2), tid_x + 2, tid_y);
-                }
-                _syncthreads();
-                if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
-                    p_sh_top.set(p.get(gtid_x_tmp, gtid_y_tmp + 2, z + 2), tid_x, tid_y + 2);
-                }
-                _syncthreads();
-                if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
-                    p_sh_top.set(
-                        p.get(gtid_x_tmp + 2, gtid_y_tmp + 2, z + 2),
-                        tid_x + 2,
-                        tid_y + 2,
-                    );
-                }
-                _syncthreads();
-                if gtid_x_tmp < k - 2 && gtid_y_tmp < j - 2 {
+                // calculate himeno if in domain
+                if gtid_x_ < k - 2 && gtid_y_ < j - 2 {
                     // we need those as isize so we shadow them
-                    let gtid_x_tmp = gtid_x_tmp as isize;
-                    let gtid_y_tmp = gtid_y_tmp as isize;
+                    let gtid_x = gtid_x_ as isize;
+                    let gtid_y = gtid_y_ as isize;
+                    let z = z as isize;
                     // coefficients are loaded for the index we calculate
-                    let a0 = a.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 0);
-                    let a1 = a.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 1);
-                    let a2 = a.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 2);
-                    let a3 = a.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 3);
-                    let b0 = b.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 0);
-                    let b1 = b.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 1);
-                    let b2 = b.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 2);
-                    let c0 = c.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 0);
-                    let c1 = c.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 1);
-                    let c2 = c.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1, 2);
-                    let bnd = bnd.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1);
-                    let wrk1 = wrk1.get(gtid_x_tmp + 1, gtid_y_tmp + 1, z as isize + 1);
-                    // do iterative jacobi
+                    let a0 = a.get(gtid_x + 1, gtid_y + 1, z + 1, 0);
+                    let a1 = a.get(gtid_x + 1, gtid_y + 1, z + 1, 1);
+                    let a2 = a.get(gtid_x + 1, gtid_y + 1, z + 1, 2);
+                    let a3 = a.get(gtid_x + 1, gtid_y + 1, z + 1, 3);
+                    let b0 = b.get(gtid_x + 1, gtid_y + 1, z + 1, 0);
+                    let b1 = b.get(gtid_x + 1, gtid_y + 1, z + 1, 1);
+                    let b2 = b.get(gtid_x + 1, gtid_y + 1, z + 1, 2);
+                    let c0 = c.get(gtid_x + 1, gtid_y + 1, z + 1, 0);
+                    let c1 = c.get(gtid_x + 1, gtid_y + 1, z + 1, 1);
+                    let c2 = c.get(gtid_x + 1, gtid_y + 1, z + 1, 2);
+                    let bnd = bnd.get(gtid_x + 1, gtid_y + 1, z + 1);
+                    let wrk1 = wrk1.get(gtid_x + 1, gtid_y + 1, z + 1);
+                    // do one iterative jacobi step
                     let s0 = a0 * p_sh_top.get(tid_x + 1, tid_y + 1)
                         + a1 * p_sh_mid.get(tid_x + 1, tid_y + 2)
                         + a2 * p_sh_mid.get(tid_x + 2, tid_y + 1)
@@ -277,9 +235,9 @@ pub unsafe extern "ptx-kernel" fn himeno(
                     let ss = (s0 * a3 - p_sh_mid.get(tid_x + 1, tid_y + 1)) * bnd;
                     wrk2.set(
                         p_sh_mid.get(tid_x + 1, tid_y + 1) + omega * ss,
-                        gtid_x_tmp + 1,
-                        gtid_y_tmp + 1,
-                        z as isize + 1,
+                        gtid_x + 1,
+                        gtid_y + 1,
+                        z + 1,
                     );
                     residual += ss * ss;
                 }
@@ -289,15 +247,12 @@ pub unsafe extern "ptx-kernel" fn himeno(
                 p_sh_mid = p_sh_top;
                 p_sh_top = tmp;
                 _syncthreads();
-                z += 1;
             }
-            bid_y += _grid_dim_y();
-            gtid_y_tmp += gnthreads_y;
+            gtid_y_ += gnthreads_y;
         }
-        bid_x += _grid_dim_x();
-        gtid_x_tmp += gnthreads_x;
+        gtid_x_ += gnthreads_x;
     }
-
+    // we reuse the top plane in shared mem to reduce the residual
     p_sh_top.set(residual, tid, 0);
     _syncthreads();
     // reduce the residual of each thread block

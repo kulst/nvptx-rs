@@ -1,3 +1,4 @@
+#[inline]
 pub fn get_init_worker_count(block_dim: isize) -> isize {
     if block_dim == 1 {
         return 0;
