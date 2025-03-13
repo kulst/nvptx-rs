@@ -4,9 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cudarc = { version = "0.13.0", features = ["cuda-version-from-build-system"]}
-image = "0.25.3"
+cudarc = {version = "0.13", features = ["cuda-version-from-build-system"]}
 rand = "0.8.5"
+affinity = "0.1.2"
+clap = { version = "4.5.26", features = ["derive"] }
+cpu-time = "1.0.0"
+rayon = "1.10.0"
+num = {version = "0.4", default-features = false}
+strum = "0.27"
+strum_macros = "0.27"
+num-traits = "0.2.14"
+image = "0.25.3"
 
 [[bin]]
 name = "add"
@@ -17,3 +25,12 @@ path = "src/memcpy.rs"
 [[bin]]
 name = "rgba2gray"
 path = "src/rgba2gray.rs"
+[[bin]]
+name = "stencil"
+path = "src/stencil.rs"
+[[bin]]
+name = "reduction"
+path = "src/reduction.rs"
+[[bin]]
+name = "matrixmultiplication"
+path = "src/matrixmultiplication.rs"

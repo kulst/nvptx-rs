@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+num = {version = "0.4", default-features = false}
 
 [lib]
 name = "kernels"

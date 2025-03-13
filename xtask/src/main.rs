@@ -80,6 +80,7 @@ fn build_kernels() -> Result<(), DynError> {
         .arg("--")
         .arg("-C")
         .arg(format!("target-cpu=sm_{capability}"))
+        .arg("-Zmir-enable-passes=-JumpThreading")
         .stdout(Stdio::piped())
         .spawn()?;
 
