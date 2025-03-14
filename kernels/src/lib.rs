@@ -1,6 +1,8 @@
 #![feature(abi_ptx, stdarch_nvptx)]
 #![feature(asm_experimental_arch)]
 #![feature(const_type_id)]
+#![feature(core_intrinsics)]
+#![feature(dynamic_shared_memory)]
 #![no_std]
 
 use core::arch::nvptx::*;

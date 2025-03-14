@@ -7,21 +7,8 @@ use num::{traits::float::FloatCore, ToPrimitive};
 
 #[inline]
 pub unsafe fn _static_shared_mem<T>() -> *mut T {
-    let shared: *mut T;
-
-    unsafe {
-        core::arch::asm!(
-            ".shared .align {align} .b8 {reg}_rust_cuda_static_shared[{size}];",
-            "cvta.shared.u64 {reg}, {reg}_rust_cuda_static_shared;",
-            reg = out(reg64) shared,
-            align = const(core::mem::align_of::<T>()),
-            size = const(core::mem::size_of::<T>()),
-        );
-    }
-    shared
+    core::intrinsics::static_shared_memory()
 }
-
-global_asm!(".extern .shared .align 8 .b8 rust_cuda_dynamic_shared_base[];");
 
 pub struct DynSmem {
     base: *mut u8,
@@ -30,14 +17,9 @@ pub struct DynSmem {
 impl DynSmem {
     // SAFETY must only be called once per thread per thread block
     pub unsafe fn new() -> Self {
-        let base: *mut u8;
-        unsafe {
-            asm!(
-            "cvta.shared.u64 {base}, rust_cuda_dynamic_shared_base;",
-            base = out(reg64) base,
-            );
+        Self {
+            base: core::intrinsics::dynamic_shared_memory(),
         }
-        Self { base }
     }
 
     pub unsafe fn get_chunk<T>(smem: *mut Self, len: usize) -> *mut T {
