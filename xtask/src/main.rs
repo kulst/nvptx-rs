@@ -1,6 +1,6 @@
 use std::env;
 use std::fs::canonicalize;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 type DynError = Box<dyn std::error::Error>;
 
@@ -39,7 +39,6 @@ fn build() -> Result<(), DynError> {
         .current_dir(canonicalize("./host-code")?)
         .arg("build")
         .args(args.into_iter().skip(2))
-        .stdout(Stdio::piped())
         .spawn()?;
 
     let output = command.wait()?;
@@ -58,7 +57,6 @@ fn run() -> Result<(), DynError> {
         .current_dir(canonicalize("./host-code").unwrap())
         .arg("run")
         .args(args.into_iter().skip(2))
-        .stdout(Stdio::piped())
         .spawn()?;
 
     let output = command.wait()?;
@@ -74,14 +72,13 @@ fn build_kernels() -> Result<(), DynError> {
 
     let mut command = Command::new("cargo")
         .current_dir(canonicalize("./kernels")?)
-        .arg("+nightly")
+        .arg("+mybuild")
         .arg("rustc")
         .arg("--release")
         .arg("--")
         .arg("-C")
         .arg(format!("target-cpu=sm_{capability}"))
         .arg("-Zmir-enable-passes=-JumpThreading")
-        .stdout(Stdio::piped())
         .spawn()?;
 
     let output = command.wait()?;

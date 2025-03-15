@@ -1,5 +1,5 @@
 use core::any::TypeId;
-use core::arch::{asm, global_asm};
+use core::arch::asm;
 use core::hint::unreachable_unchecked;
 
 use num::FromPrimitive;
