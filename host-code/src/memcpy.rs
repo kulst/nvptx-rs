@@ -1,24 +1,20 @@
 use cudarc::{
-    driver::{CudaDevice, DriverError, LaunchAsync, LaunchConfig},
+    driver::{CudaContext, LaunchConfig, PushKernelArg},
     nvrtc::Ptx,
 };
 use rand::{distributions::Standard, prelude::*};
-use std::iter;
 
-fn main() -> Result<(), DriverError> {
-    let dev = CudaDevice::new(0)?;
-
-    // Load the kernel file specified in the first command line argument
-    dev.load_ptx(
-        Ptx::from_src(include_str!(
+fn main() {
+    let ctx = CudaContext::new(0).unwrap();
+    let stream = ctx.default_stream();
+    let module = ctx
+        .load_module(Ptx::from_src(include_str!(
             "../../kernels/target/nvptx64-nvidia-cuda/release/kernels.ptx"
-        )),
-        "kernels",
-        &["add", "memcpy", "rgba2gray"],
-    )?;
+        )))
+        .unwrap();
 
     // and then retrieve the function with `get_func`
-    let f = dev.get_func("kernels", "memcpy").unwrap();
+    let f = module.load_function("memcpy").unwrap();
 
     // Specify size of input array
     const SIZE: usize = 1024 * 1024;
@@ -27,22 +23,23 @@ fn main() -> Result<(), DriverError> {
     let mut rng = rand::thread_rng().sample_iter(Standard);
 
     let h_a: Vec<f32> = rng.by_ref().take(SIZE).collect();
-    let mut h_b: Vec<f32> = iter::repeat(0f32).take(SIZE).collect();
+    let mut h_b: Vec<f32> = std::iter::repeat_n(0f32, SIZE).collect();
 
     // Allocate device memory and copy host values to it
-    let d_a = dev.htod_sync_copy(&h_a)?;
-    let mut d_b = dev.alloc_zeros::<f32>(SIZE)?;
+    let d_a = stream.memcpy_stod(&h_a).unwrap();
+    let mut d_b = stream.alloc_zeros::<f32>(SIZE).unwrap();
 
     // Specify number of threads and launch the kernel
-    let n = SIZE as u32;
-    let cfg = LaunchConfig::for_num_elems(n);
-    unsafe { f.launch(cfg, (&mut d_b, &d_a, n as usize)) }?;
+    let n = SIZE;
+    let cfg = LaunchConfig::for_num_elems(n.try_into().unwrap());
+    let mut launch_args = stream.launch_builder(&f);
+    launch_args.arg(&mut d_b).arg(&d_a).arg(&n);
+    unsafe { launch_args.launch(cfg).unwrap() };
 
     // Deallocate device memory and copy it back to host if necessary
-    dev.sync_reclaim(d_a)?;
-    dev.dtoh_sync_copy_into(&d_b, &mut h_b)?;
-
+    stream.memcpy_dtoh(&d_b, &mut h_b).unwrap();
+    drop(d_a);
+    drop(d_b);
     // Verify correctness
     assert_eq!(h_a, h_b);
-    Ok(())
 }

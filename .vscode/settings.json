@@ -4,8 +4,8 @@
         "compounds": []
     },
     "rust-analyzer.linkedProjects": [
-        "./host-code/Cargo.toml",
-        "./kernels/Cargo.toml",
-        "./xtask/Cargo.toml"
+        "host-code/Cargo.toml",
+        //"kernels/Cargo.toml",
+        "xtask/Cargo.toml"
     ]
 }

@@ -1,40 +1,6 @@
-use cudarc::driver::{result, sys, CudaDevice, DriverError};
 use num::traits::float::FloatCore;
 use rayon::prelude::*;
 use std::ops::{Index, IndexMut};
-use std::sync::Arc;
-
-/// Cudarc does not support a safe and easy interface for CudaEvents yet
-/// so we create this type by ourselves
-pub struct CudaEvent {
-    dev: Arc<CudaDevice>,
-    event: sys::CUevent,
-}
-/// Implementation of the safe CudaEvent type
-impl CudaEvent {
-    pub fn new(dev: Arc<CudaDevice>, flags: sys::CUevent_flags) -> Result<Self, DriverError> {
-        let event = result::event::create(flags)?;
-        Ok(Self { dev, event })
-    }
-
-    pub fn record(&mut self) -> Result<(), DriverError> {
-        Ok(unsafe { result::event::record(self.event, *self.dev.cu_stream())? })
-    }
-
-    pub fn sync(&self) -> Result<(), DriverError> {
-        Ok(unsafe { result::event::synchronize(self.event)? })
-    }
-
-    pub fn elapsed(&self, other: &Self) -> Result<f32, DriverError> {
-        unsafe { result::event::elapsed(self.event, other.event) }
-    }
-}
-/// Implement Drop for the CudaEvent type to make sure we do destroy it
-impl Drop for CudaEvent {
-    fn drop(&mut self) {
-        unsafe { result::event::destroy(self.event).unwrap() };
-    }
-}
 
 /// To calculate the stencil on the host for value validation, we create a helper
 /// struct for easier handling of 3D matrices

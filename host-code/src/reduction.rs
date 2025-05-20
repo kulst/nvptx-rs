@@ -1,11 +1,11 @@
 use clap::{command, error::ErrorKind, CommandFactory, Parser, ValueEnum};
 use cudarc::{
     driver::{
-        sys::*, CudaDevice, DeviceRepr, DriverError, LaunchAsync, LaunchConfig, ValidAsZeroBits,
+        sys::*, CudaContext, CudaModule, CudaStream, DeviceRepr, DriverError, LaunchConfig,
+        PushKernelArg, ValidAsZeroBits,
     },
     nvrtc::Ptx,
 };
-use host_code::CudaEvent;
 use num::traits::float::FloatCore;
 use rayon::{iter::repeatn, prelude::*};
 use std::{
@@ -78,7 +78,9 @@ fn exec_reduction<T>(
     input: &[T],
     exec_cfg: &ExecConfig,
     result: T,
-    device: &Arc<CudaDevice>,
+    context: &Arc<CudaContext>,
+    module: &Arc<CudaModule>,
+    stream: &Arc<CudaStream>,
 ) -> Result<(), DriverError>
 where
     T: FloatCore + 'static + DeviceRepr + ValidAsZeroBits + Default + Unpin + Display,
@@ -88,12 +90,12 @@ where
     // We must choose the right kernel depending on type of T
     let (kernel, kernel_name) = if TypeId::of::<T>() == TypeId::of::<f32>() {
         (
-            device.get_func("kernels", "reduction_f32").unwrap(),
+            module.load_function("reduction_f32").unwrap(),
             "reduction_f32",
         )
     } else if TypeId::of::<T>() == TypeId::of::<f64>() {
         (
-            device.get_func("kernels", "reduction_f64").unwrap(),
+            module.load_function("reduction_f64").unwrap(),
             "reduction_f64",
         )
     } else {
@@ -102,24 +104,24 @@ where
     // get input size
     let n = input.len();
     // Create events to measure times
-    let mut pre_event = CudaEvent::new(device.clone(), CUevent_flags::CU_EVENT_DEFAULT)?;
-    let mut pre_kernel_event = CudaEvent::new(device.clone(), CUevent_flags::CU_EVENT_DEFAULT)?;
-    let mut post_kernel_event = CudaEvent::new(device.clone(), CUevent_flags::CU_EVENT_DEFAULT)?;
-    let mut post_event = CudaEvent::new(device.clone(), CUevent_flags::CU_EVENT_DEFAULT)?;
+    let pre_event = context.new_event(Some(CUevent_flags_enum::CU_EVENT_DEFAULT))?;
+    let pre_kernel_event = context.new_event(Some(CUevent_flags_enum::CU_EVENT_DEFAULT))?;
+    let post_kernel_event = context.new_event(Some(CUevent_flags_enum::CU_EVENT_DEFAULT))?;
+    let post_event = context.new_event(Some(CUevent_flags_enum::CU_EVENT_DEFAULT))?;
     // if cyclic allocation is disabled we allocate the device buffers here already
     let mut device_buffers = if exec_cfg.no_cyclic_alloc {
-        Some((device.htod_sync_copy(input)?, device.alloc_zeros::<T>(1)?))
+        Some((stream.memcpy_stod(input)?, stream.alloc_zeros::<T>(1)?))
     } else {
         None
     };
     // Iterate over the given block sizes
     for &block_dim in exec_cfg.block_dims {
         // Calculate grid dimensions, make sure max_grid is always included
-        let min_grid = ((n as u32 + block_dim * (1 << exec_cfg.max_thread_iterations) - 1)
-            / (block_dim * (1 << exec_cfg.max_thread_iterations)))
+        let min_grid = (n as u32)
+            .div_ceil(block_dim * (1 << exec_cfg.max_thread_iterations))
             .min(1024);
-        let max_grid = ((n as u32 + block_dim * (1 << exec_cfg.min_thread_iterations) - 1)
-            / (block_dim * (1 << exec_cfg.min_thread_iterations)))
+        let max_grid = (n as u32)
+            .div_ceil(block_dim * (1 << exec_cfg.min_thread_iterations))
             .min(1024);
         let grid_dims = successors(Some(min_grid), |&dim| Some(dim << 1))
             .take_while(|&dim| dim < max_grid)
@@ -138,40 +140,49 @@ where
                 // If device input and device output are already allocated, we skip cyclic allocation
                 let kernel_result = if let Some((d_input, d_output)) = &mut device_buffers {
                     // Record event before calling into CUDA
-                    pre_event.record()?;
+                    pre_event.record(stream)?;
                     // Record event before kernel invocation
-                    pre_kernel_event.record()?;
-                    unsafe { kernel.clone().launch(cfg, (d_input, d_output, n))? }
+                    pre_kernel_event.record(stream)?;
+                    let mut launch_args = stream.launch_builder(&kernel);
+                    launch_args.arg(d_input).arg(d_output).arg(&n);
+                    unsafe {
+                        launch_args.launch(cfg)?;
+                    }
                     // Record event after kernel invocation
-                    post_kernel_event.record()?;
+                    post_kernel_event.record(stream)?;
                     // Record event after calling into CUDA and sync the device
-                    post_event.record()?;
-                    post_event.sync()?;
+                    post_event.record(stream)?;
+                    post_event.synchronize()?;
                     None
                 } else {
                     // Record event before calling into CUDA
-                    pre_event.record()?;
+                    pre_event.record(stream)?;
                     // Allocate memory on the GPU and copy input to it
-                    let d_input = device.htod_sync_copy(input)?;
-                    let mut d_output = device.alloc_zeros::<T>(1)?;
+                    let d_input = stream.memcpy_stod(input)?;
+                    let mut d_output = stream.alloc_zeros::<T>(1)?;
                     // Record event before kernel invocation
-                    pre_kernel_event.record()?;
-                    unsafe { kernel.clone().launch(cfg, (&d_input, &mut d_output, n))? }
+                    pre_kernel_event.record(stream)?;
+                    let mut launch_args = stream.launch_builder(&kernel);
+                    launch_args.arg(&d_input).arg(&mut d_output).arg(&n);
+                    unsafe {
+                        launch_args.launch(cfg)?;
+                    }
                     // Record event after kernel invocation
-                    post_kernel_event.record()?;
+                    post_kernel_event.record(stream)?;
                     // Copy back result and drop the device input buffer
-                    let kernel_result = device.sync_reclaim(d_output)?[0];
+                    let kernel_result = stream.memcpy_dtov(&d_output)?[0];
                     drop(d_input);
+                    drop(d_output);
                     // Record event after calling into CUDA and sync the device
-                    post_event.record()?;
-                    post_event.sync()?;
+                    post_event.record(stream)?;
+                    post_event.synchronize()?;
                     Some(kernel_result)
                 };
                 // Calculate elapsed durations
                 let (pre_dur, kernel_dur, post_dur) = (
-                    pre_event.elapsed(&pre_kernel_event)?,
-                    pre_kernel_event.elapsed(&post_kernel_event)?,
-                    post_kernel_event.elapsed(&post_event)?,
+                    pre_event.elapsed_ms(&pre_kernel_event)?,
+                    pre_kernel_event.elapsed_ms(&post_kernel_event)?,
+                    post_kernel_event.elapsed_ms(&post_event)?,
                 );
                 // Write to stdout the result and measurements of the current invocation
                 let output = if let Some(kernel_result) = kernel_result {
@@ -252,17 +263,16 @@ fn main() {
         reps,
         no_cyclic_alloc,
     };
-    // Create the Cuda Device
-    let dev = CudaDevice::new(0).unwrap();
+    // Create the Cuda Context
+    let ctx = CudaContext::new(0).unwrap();
+    let stream = ctx.default_stream();
+
     // Load the kernel file and compile it
-    dev.load_ptx(
-        Ptx::from_src(include_str!(
+    let module = ctx
+        .load_module(Ptx::from_src(include_str!(
             "../../kernels/target/nvptx64-nvidia-cuda/release/kernels.ptx"
-        )),
-        "kernels",
-        &["reduction_f32", "reduction_f64"],
-    )
-    .unwrap();
+        )))
+        .unwrap();
     // Print the header
     if !no_cyclic_alloc {
         println!("kernel;iteration;input-size;block-dim;grid-dim;pre-duration;kernel-duration;post-duration;kernel-result;cpu-result");
@@ -277,7 +287,7 @@ fn main() {
             let input: Vec<f32> = repeatn(1f32, 1usize << i).collect();
             let result = input.par_iter().sum();
             // Call helper function
-            exec_reduction(&input, &exec_config, result, &dev).unwrap();
+            exec_reduction(&input, &exec_config, result, &ctx, &module, &stream).unwrap();
         }
         // Call helper function for f64 type if necessary
         if value_type == ValueType::F64 || value_type == ValueType::Both {
@@ -285,7 +295,7 @@ fn main() {
             let input: Vec<f64> = repeatn(1f64, 1usize << i).collect();
             let result = input.par_iter().sum();
             // Call helper function
-            exec_reduction(&input, &exec_config, result, &dev).unwrap();
+            exec_reduction(&input, &exec_config, result, &ctx, &module, &stream).unwrap();
         }
     }
 }
