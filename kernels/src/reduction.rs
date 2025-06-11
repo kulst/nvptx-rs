@@ -5,7 +5,6 @@ use crate::util::*;
 use core::hint::assert_unchecked;
 use core::{arch::nvptx::*, ops::AddAssign};
 
-
 #[inline]
 pub(crate) unsafe fn reduction<T>(input: *const T, output: *mut T, n: usize)
 where
@@ -25,10 +24,14 @@ where
     assert_unchecked(gnthreads > 0);
     // get chunk in dynamic shared memory
     let local_sum = DynSmem::get_chunk::<T>(&mut dyn_smem, nthreads);
-    // Initialize local sum
-    *local_sum.add(tid) = T::zero();
-    // Fill local sum and do first reduction steps
-    for i in (gtid..n).step_by(gnthreads) {
+    // Initialize local_sum with first input value or zero if gtid >= n
+    if gtid < n {
+        *local_sum.add(tid) = *input.add(gtid);
+    } else {
+        *local_sum.add(tid) = T::zero();
+    }
+    // Add subsequent values to local_sum
+    for i in (gtid..n).step_by(gnthreads).skip(1) {
         *local_sum.add(tid) += *input.add(i);
     }
     _syncthreads();
