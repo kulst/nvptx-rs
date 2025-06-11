@@ -10,5 +10,5 @@ pub fn get_init_worker_count(block_dim: usize) -> usize {
         }
         i *= 2;
     }
-    return 512;
+    512
 }
