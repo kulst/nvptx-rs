@@ -85,7 +85,7 @@ pub(crate) unsafe fn stencil<T: FloatCore + 'static + FromPrimitive>(
                     gtid + _block_dim_x() as usize,
                 ))
             })
-            .take_while(|(tid, gtid)| *tid < _block_dim_x() as usize + 2 && *gtid < k - 2)
+            .take_while(|(tid, gtid)| *tid < _block_dim_x() as usize + 2 && *gtid < k)
             {
                 for (tid_y, gtid_y) in successors(Some((tid_y, gtid_y)), |(tid, gtid)| {
                     Some((
@@ -93,7 +93,7 @@ pub(crate) unsafe fn stencil<T: FloatCore + 'static + FromPrimitive>(
                         gtid + _block_dim_y() as usize,
                     ))
                 })
-                .take_while(|(tid, gtid)| *tid < _block_dim_y() as usize + 2 && *gtid < j - 2)
+                .take_while(|(tid, gtid)| *tid < _block_dim_y() as usize + 2 && *gtid < j)
                 {
                     p_sh_bot.set(p.get(gtid_x, gtid_y, 0), tid_x, tid_y);
                     p_sh_mid.set(p.get(gtid_x, gtid_y, 1), tid_x, tid_y);
@@ -108,7 +108,7 @@ pub(crate) unsafe fn stencil<T: FloatCore + 'static + FromPrimitive>(
                         gtid + _block_dim_x() as usize,
                     ))
                 })
-                .take_while(|(tid, gtid)| *tid < _block_dim_x() as usize + 2 && *gtid < k - 2)
+                .take_while(|(tid, gtid)| *tid < _block_dim_x() as usize + 2 && *gtid < k)
                 {
                     for (tid_y, gtid_y) in successors(Some((tid_y, gtid_y)), |(tid, gtid)| {
                         Some((
@@ -116,7 +116,7 @@ pub(crate) unsafe fn stencil<T: FloatCore + 'static + FromPrimitive>(
                             gtid + _block_dim_y() as usize,
                         ))
                     })
-                    .take_while(|(tid, gtid)| *tid < _block_dim_y() as usize + 2 && *gtid < j - 2)
+                    .take_while(|(tid, gtid)| *tid < _block_dim_y() as usize + 2 && *gtid < j)
                     {
                         p_sh_top.set(p.get(gtid_x, gtid_y, z + 2), tid_x, tid_y);
                     }
