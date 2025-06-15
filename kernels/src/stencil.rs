@@ -43,7 +43,7 @@ pub(crate) unsafe fn stencil<T: FloatCore + 'static + FromPrimitive>(
     let nblocks_y = (j - 2 + _block_dim_y() - 1) / _block_dim_y();
     // we need i, j and k as usize so we typecast and shadow the old ones
     let (i, j, k) = (i as usize, j as usize, k as usize);
-    // associate p as a Linear3D
+    // // associate p as a Linear3D
     let p = Linear3D::new(p, k, j, i);
     // shared memory rows for p_sh_[top,mid,bot]
     let smem_rows = (_block_dim_y() + 2) as usize;
@@ -79,24 +79,47 @@ pub(crate) unsafe fn stencil<T: FloatCore + 'static + FromPrimitive>(
             .zip(successors(Some(gtid_y), |&id| Some(id + gnthreads_y)))
         {
             // load bottom and mid plane if in domain
-            if gtid_x < k - 2 && gtid_y < j - 2 {
-                p_sh_bot.set(p.get(gtid_x, gtid_y, 0), tid_x, tid_y);
-                p_sh_bot.set(p.get(gtid_x + 2, gtid_y, 0), tid_x + 2, tid_y);
-                p_sh_bot.set(p.get(gtid_x, gtid_y + 2, 0), tid_x, tid_y + 2);
-                p_sh_bot.set(p.get(gtid_x + 2, gtid_y + 2, 0), tid_x + 2, tid_y + 2);
-                p_sh_mid.set(p.get(gtid_x, gtid_y, 1), tid_x, tid_y);
-                p_sh_mid.set(p.get(gtid_x + 2, gtid_y, 1), tid_x + 2, tid_y);
-                p_sh_mid.set(p.get(gtid_x, gtid_y + 2, 1), tid_x, tid_y + 2);
-                p_sh_mid.set(p.get(gtid_x + 2, gtid_y + 2, 1), tid_x + 2, tid_y + 2);
+            for (tid_x, gtid_x) in successors(Some((tid_x, gtid_x)), |(tid, gtid)| {
+                Some((
+                    tid + _block_dim_x() as usize,
+                    gtid + _block_dim_x() as usize,
+                ))
+            })
+            .take_while(|(tid, gtid)| *tid < _block_dim_x() as usize + 2 && *gtid < k - 2)
+            {
+                for (tid_y, gtid_y) in successors(Some((tid_y, gtid_y)), |(tid, gtid)| {
+                    Some((
+                        tid + _block_dim_y() as usize,
+                        gtid + _block_dim_y() as usize,
+                    ))
+                })
+                .take_while(|(tid, gtid)| *tid < _block_dim_y() as usize + 2 && *gtid < j - 2)
+                {
+                    p_sh_bot.set(p.get(gtid_x, gtid_y, 0), tid_x, tid_y);
+                    p_sh_mid.set(p.get(gtid_x, gtid_y, 1), tid_x, tid_y);
+                }
             }
             // iterate in i direction
             for z in 0..(i - 2) {
                 // load top plane if in domain
-                if gtid_x < k - 2 && gtid_y < j - 2 {
-                    p_sh_top.set(p.get(gtid_x, gtid_y, z + 2), tid_x, tid_y);
-                    p_sh_top.set(p.get(gtid_x + 2, gtid_y, z + 2), tid_x + 2, tid_y);
-                    p_sh_top.set(p.get(gtid_x, gtid_y + 2, z + 2), tid_x, tid_y + 2);
-                    p_sh_top.set(p.get(gtid_x + 2, gtid_y + 2, z + 2), tid_x + 2, tid_y + 2);
+                for (tid_x, gtid_x) in successors(Some((tid_x, gtid_x)), |(tid, gtid)| {
+                    Some((
+                        tid + _block_dim_x() as usize,
+                        gtid + _block_dim_x() as usize,
+                    ))
+                })
+                .take_while(|(tid, gtid)| *tid < _block_dim_x() as usize + 2 && *gtid < k - 2)
+                {
+                    for (tid_y, gtid_y) in successors(Some((tid_y, gtid_y)), |(tid, gtid)| {
+                        Some((
+                            tid + _block_dim_y() as usize,
+                            gtid + _block_dim_y() as usize,
+                        ))
+                    })
+                    .take_while(|(tid, gtid)| *tid < _block_dim_y() as usize + 2 && *gtid < j - 2)
+                    {
+                        p_sh_top.set(p.get(gtid_x, gtid_y, z + 2), tid_x, tid_y);
+                    }
                 }
                 _syncthreads();
                 // calculate stencil if in domain
