@@ -3,6 +3,14 @@
 #![feature(const_type_id)]
 #![no_std]
 
+use ndarray::prelude::*;
+
+use dummy_alloc::DummyAlloc;
+
+// Configure it as the global allocator.
+#[global_allocator]
+static GLOBAL: DummyAlloc = DummyAlloc;
+
 use core::arch::nvptx::*;
 
 mod intrinsics;

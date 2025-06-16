@@ -1,9 +1,13 @@
+use ndarray::Axis;
+use ndarray::RawArrayViewMut;
+use ndarray::Slice;
 use num::traits::float::FloatCore;
 use num::FromPrimitive;
 
 use crate::intrinsics::*;
 use crate::linear::*;
 use core::arch::nvptx::*;
+use core::hint::unreachable_unchecked;
 use core::iter::successors;
 
 #[inline]
@@ -61,22 +65,33 @@ pub(crate) unsafe fn stencil<T: FloatCore + 'static + FromPrimitive>(
     let p_sh_bot = DynSmem::get_chunk(&mut dyn_smem, smem_len);
     let mut p_sh_bot = Linear2D::new(p_sh_bot, smem_cols, smem_rows);
     // associate wrk2 as Linear3D
+    let mut ndwrk2 = RawArrayViewMut::from_shape_ptr((k, j, i), wrk2);
+    ndwrk2.slice_each_axis_inplace(|desc| match desc.axis {
+        Axis(0) => Slice::new(gtid_x as isize + 1, Some(-1), gnthreads_x as isize),
+        Axis(1) => Slice::new(gtid_y as isize + 1, Some(-1), gnthreads_y as isize),
+        Axis(2) => Slice::new(1, Some(-1), 1),
+        _ => unreachable_unchecked(),
+    });
+    let mut ndwrk2 = ndwrk2.deref_into_view_mut();
     let mut wrk2 = Linear3D::new(wrk2, k, j, i);
+
     // iterate over necessary blocks in x direction (k direction)
     // during iteration we need to check if we are still in the domain by
     // using the thread id in x in the grid. We add the number of threads that
     // are present in x in the grid after each iteration
-    for (_bid_x, gtid_x) in (_block_idx_x()..nblocks_x)
+    for ((_bid_x, gtid_x), xstep) in (_block_idx_x()..nblocks_x)
         .step_by(_grid_dim_x() as usize)
         .zip(successors(Some(gtid_x), |&id| Some(id + gnthreads_x)))
+        .zip(0..)
     {
         // iterate over necessary blocks in y direction (j direction)
         // during iteration we need to check if we are still in the domain by
         // using the thread id in y in the grid. We add the number of threads that
         // are present in y in the grid after each iteration
-        for (_bid_y, gtid_y) in (_block_idx_y()..nblocks_y)
+        for ((_bid_y, gtid_y), ystep) in (_block_idx_y()..nblocks_y)
             .step_by(_grid_dim_y() as usize)
             .zip(successors(Some(gtid_y), |&id| Some(id + gnthreads_y)))
+            .zip(0..)
         {
             // load bottom and mid plane if in domain
             for (tid_x, gtid_x) in successors(Some((tid_x, gtid_x)), |(tid, gtid)| {
@@ -148,12 +163,13 @@ pub(crate) unsafe fn stencil<T: FloatCore + 'static + FromPrimitive>(
                         + c2 * p_sh_mid.get(tid_x, tid_y + 1)
                         + wrk1;
                     let ss = (s0 * a3 - p_sh_mid.get(tid_x + 1, tid_y + 1)) * bnd;
-                    wrk2.set(
-                        p_sh_mid.get(tid_x + 1, tid_y + 1) + omega * ss,
-                        gtid_x + 1,
-                        gtid_y + 1,
-                        z + 1,
-                    );
+                    // wrk2.set(
+                    //     p_sh_mid.get(tid_x + 1, tid_y + 1) + omega * ss,
+                    //     gtid_x + 1,
+                    //     gtid_y + 1,
+                    //     z + 1,
+                    // );
+                    ndwrk2[[xstep, ystep, z]] = p_sh_mid.get(tid_x + 1, tid_y + 1) + omega * ss;
                 }
                 // swap smem planes
                 let tmp = p_sh_bot;
