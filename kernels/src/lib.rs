@@ -2,8 +2,13 @@
 #![feature(asm_experimental_arch)]
 #![feature(const_type_id)]
 #![no_std]
+use dummy_alloc::DummyAlloc;
 
-use core::arch::nvptx::*;
+// Configure it as the global allocator.
+#[global_allocator]
+static GLOBAL: DummyAlloc = DummyAlloc;
+
+use core::{arch::nvptx::*, mem::transmute};
 
 mod intrinsics;
 mod linear;
@@ -164,6 +169,12 @@ pub unsafe extern "ptx-kernel" fn rgba2gray(
 }
 
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    let line = if let Some(loc) = info.location() {
+        loc.line()
+    } else {
+        0
+    };
+    unsafe { vprintf("%d\n".as_ptr(), transmute(&line)) };
+    unsafe { trap() }
 }

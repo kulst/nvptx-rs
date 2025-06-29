@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-num = {version = "0.4", default-features = false}
+num = { version = "0.4", default-features = false }
+dummy-alloc = "0.1.0"
+#mdarray = { version = "0.7.0" }
+mdarray = { git = "https://github.com/kulst/mdarray", branch = "main", default-features = false }
 
 [lib]
 name = "kernels"
