@@ -8,6 +8,7 @@ num = { version = "0.4", default-features = false }
 dummy-alloc = "0.1.0"
 #mdarray = { version = "0.7.0" }
 mdarray = { git = "https://github.com/kulst/mdarray", branch = "main", default-features = false }
+simtarray = { git = "https://github.com/kulst/simtarray", branch = "main" }
 
 [lib]
 name = "kernels"
