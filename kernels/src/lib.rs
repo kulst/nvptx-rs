@@ -170,11 +170,11 @@ pub unsafe extern "ptx-kernel" fn rgba2gray(
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    let line = if let Some(loc) = info.location() {
-        loc.line()
-    } else {
-        0
-    };
-    unsafe { vprintf("%d\n".as_ptr(), transmute(&line)) };
+    // let line = if let Some(loc) = info.location() {
+    //     loc.line()
+    // } else {
+    //     0
+    // };
+    // unsafe { vprintf("%d\n".as_ptr(), transmute(&line)) };
     unsafe { trap() }
 }
